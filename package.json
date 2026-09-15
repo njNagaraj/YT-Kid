@@ -1,0 +1,22 @@
+{
+  "name": "yt-kids-video-cleaner",
+  "version": "1.0.0",
+  "description": "Automated Gemini watermark removal and video concatenation pipeline",
+  "main": "index.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "keywords": [
+    "gemini",
+    "watermark-remover",
+    "video-processing",
+    "ffmpeg"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@pilio/gemini-watermark-remover": "latest",
+    "playwright": "^1.63.0"
+  }
+}

@@ -8,6 +8,7 @@ Powered by the local Reverse Alpha Blending engine from [geminiwatermarkremover.
 
 ## ✨ Features
 
+- 🎬 **Channel Intro Branding**: Automatically detects and prepends your channel intro (`channel_assets/channel_intro.mp4`) to every processed video. Automatically adapts dimensions if necessary to guarantee smooth concatenation.
 - 🔍 **Automatic Latest Folder Detection**: Automatically detects and processes the newest folder in `input/` (e.g. `video1`, `video2`, `video3`).
 - 🔢 **Natural Numeric Sequence Sorting**: Correctly sequences clips (`v1`, `v2`, `v3` ... `v9`, `v10`) without alphabetical sorting glitches (`v1`, `v10`, `v2`).
 - 📊 **Real-Time Live Console Progress**: Shows an in-place dynamic progress bar in the terminal with live frame counts and percentages:
@@ -52,6 +53,10 @@ Powered by the local Reverse Alpha Blending engine from [geminiwatermarkremover.
 
 ```text
 YT-Kid/
+├── channel_assets/         <-- Channel branding assets
+│   ├── channel_intro.mp4   <-- Prepended automatically to every output video
+│   ├── channel_banner.png
+│   └── channel_logo.png
 ├── input/
 │   └── video1/             <-- Place your source clips here
 │       ├── v1.mp4
@@ -108,6 +113,8 @@ node index.mjs [options]
 | `--input <path>` | `-i` | Explicitly specify input folder | Auto-detect latest `video*` |
 | `--output <path>` | `-o` | Output directory for merged video | `output` |
 | `--name <file>` | `-n` | Custom output filename | Auto-derived (e.g. `output1.mp4`) |
+| `--intro <path>` | | Explicit channel intro video path | `channel_assets/channel_intro.mp4` |
+| `--no-intro` | | Skip adding the channel intro to merged video | `false` |
 | `--bitrate <Mbps>`| `-b` | Video bitrate for watermark removal (in Mbps) | `40` |
 | `--keep-temp` | | Keep temporary cleaned clips for inspection | `false` |
 | `--help` | `-h` | Display help message and options | |
@@ -117,6 +124,12 @@ node index.mjs [options]
 # Process a specific folder
 node index.mjs -i input/video2 -o output -n custom_final.mp4
 
+# Run with custom intro video
+node index.mjs --intro custom_intro.mp4
+
+# Run without prepending any channel intro
+node index.mjs --no-intro
+
 # Run with custom watermark removal bitrate (60 Mbps)
 node index.mjs -b 60
 ```
@@ -125,11 +138,12 @@ node index.mjs -b 60
 
 ## 🛠️ How It Works Under the Hood
 
-1. **Clip Discovery**: Scans `input/` for folders matching `video<N>`, selects the highest index, and loads clips naturally ordered (`v1` < `v2` < `v10`).
-2. **Reverse Alpha Blending Engine**: Invokes `@pilio/gemini-watermark-remover` via headless Playwright Chromium. It analyzes the video frame-by-frame, locates the watermark mask via neural inference, and computes the mathematical inverse of the alpha blending to restore the original pixel colors underneath.
+1. **Clip & Asset Discovery**: Scans `input/` for folders matching `video<N>`, selects the highest index, and loads clips naturally ordered (`v1` < `v2` < `v10`). Also checks for `channel_assets/channel_intro.mp4`.
+2. **Reverse Alpha Blending Engine**: Invokes `@pilio/gemini-watermark-remover` via headless Playwright Chromium. It analyzes each video clip frame-by-frame, locates the watermark mask via neural inference, and computes the mathematical inverse of the alpha blending to restore the original pixel colors underneath.
 3. **Subprocess Stream Interception**: Intercepts `stderr` progress messages in real time to render a smooth terminal progress bar.
-4. **FFmpeg Demuxer Stitching**: Generates a temporary FFmpeg concat manifest and invokes `ffmpeg -f concat -safe 0 -i manifest.txt -c copy output.mp4`. If all clips share dimensions and codecs (standard Gemini outputs), stitching is instantaneous with **zero compression quality loss**.
-5. **Garbage Collection**: Deletes all temporary manifests and intermediate files.
+4. **Resolution Adaptation**: If the channel intro resolution or framerate differs from your source video clips, it is automatically adapted with aspect-ratio-safe padding so FFmpeg can stitch seamlessly.
+5. **FFmpeg Demuxer Stitching**: Generates a temporary FFmpeg concat manifest prepending the channel intro followed by all cleaned clips in sequence, invoking `ffmpeg -f concat -safe 0 -i manifest.txt -c copy output.mp4` for zero quality loss.
+6. **Garbage Collection**: Deletes all temporary manifests and intermediate files.
 
 ---
 

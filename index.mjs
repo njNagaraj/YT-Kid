@@ -28,6 +28,8 @@ function parseArgs() {
     inputFolder: null,
     outputFolder: 'output',
     outputFileName: null,
+    introPath: null,
+    noIntro: false,
     bitrateMbps: 40,
     keepTemp: false,
     help: false
@@ -43,6 +45,10 @@ function parseArgs() {
       options.outputFolder = args[++i];
     } else if (arg === '--name' || arg === '-n') {
       options.outputFileName = args[++i];
+    } else if (arg === '--intro') {
+      options.introPath = args[++i];
+    } else if (arg === '--no-intro') {
+      options.noIntro = true;
     } else if (arg === '--dir' || arg === '-d') {
       options.baseDir = args[++i];
     } else if (arg === '--bitrate' || arg === '-b') {
@@ -66,16 +72,123 @@ Usage:
 Options:
   -i, --input <folder>    Explicitly specify the video folder (default: auto-detect latest video1, video2, etc.)
   -o, --output <folder>   Output directory for merged video (default: output)
+  -n, --name <file>       Custom output filename (default: output1.mp4, output2.mp4)
+      --intro <path>      Explicit channel intro video path (default: channel_assets/channel_intro.mp4)
+      --no-intro          Skip adding the channel intro to merged video
   -d, --dir <path>        Base directory to search for folders (default: current directory)
   -b, --bitrate <Mbps>    Output bitrate for watermark removal in Mbps (default: 40)
   -h, --help              Show this help message
 
 Auto-detection Logic:
   Finds folders inside "input/" matching "video1", "video2", etc.
+  Prepends channel intro from "channel_assets/channel_intro.mp4" if present.
   Naturally ranks by index and last-modified time, selecting the latest folder (e.g. video2).
   Reads clips inside sorted naturally: v1.mp4, v2.mp4, ..., v10.mp4.
   Outputs to output/output1.mp4 (or output2.mp4 for video2).
 `);
+}
+
+/**
+ * Find channel intro video file
+ */
+function findChannelIntro(baseDir, explicitIntroPath) {
+  if (explicitIntroPath) {
+    const fullPath = path.resolve(baseDir, explicitIntroPath);
+    if (fs.existsSync(fullPath)) return fullPath;
+    throw new Error(`Explicit channel intro file not found: ${explicitIntroPath}`);
+  }
+
+  const candidates = [
+    path.join(baseDir, 'channel_assets', 'channel_intro.mp4'),
+    path.join(baseDir, 'channel_assets', 'channel_into.mp4'),
+    path.join(baseDir, 'channel_intro.mp4')
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Probe video stream properties (width, height, fps) via ffprobe
+ */
+function getVideoMetadata(filePath) {
+  try {
+    const result = spawnSync(
+      'ffprobe',
+      [
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,r_frame_rate',
+        '-of', 'json',
+        filePath
+      ],
+      { encoding: 'utf-8' }
+    );
+    if (result.status === 0 && result.stdout) {
+      const parsed = JSON.parse(result.stdout);
+      if (parsed.streams && parsed.streams[0]) {
+        return parsed.streams[0];
+      }
+    }
+  } catch {
+    // Ignore probing error
+  }
+  return null;
+}
+
+/**
+ * Ensure channel intro matches reference video dimensions/fps for smooth concatenation
+ */
+function prepareChannelIntro(introFile, referenceClipPath, tempDir) {
+  if (!referenceClipPath) return introFile;
+
+  const introMeta = getVideoMetadata(introFile);
+  const targetMeta = getVideoMetadata(referenceClipPath);
+
+  if (!introMeta || !targetMeta) {
+    return introFile;
+  }
+
+  const widthMatch = Number(introMeta.width) === Number(targetMeta.width);
+  const heightMatch = Number(introMeta.height) === Number(targetMeta.height);
+  const fpsMatch = String(introMeta.r_frame_rate) === String(targetMeta.r_frame_rate);
+
+  if (widthMatch && heightMatch && fpsMatch) {
+    return introFile;
+  }
+
+  const normalizedIntro = path.join(tempDir, 'normalized_channel_intro.mp4');
+  console.log(`\n🎞️ Adapting channel intro to match clip format (${targetMeta.width}x${targetMeta.height}, ${targetMeta.r_frame_rate} fps)...`);
+
+  const vf = `scale=${targetMeta.width}:${targetMeta.height}:force_original_aspect_ratio=decrease,pad=${targetMeta.width}:${targetMeta.height}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+  const res = spawnSync(
+    'ffmpeg',
+    [
+      '-y',
+      '-i', introFile,
+      '-vf', vf,
+      '-r', String(targetMeta.r_frame_rate),
+      '-c:v', 'libx264',
+      '-crf', '18',
+      '-preset', 'fast',
+      '-c:a', 'aac',
+      '-ar', '48000',
+      '-ac', '2',
+      normalizedIntro
+    ],
+    { stdio: 'pipe' }
+  );
+
+  if (res.status === 0 && fs.existsSync(normalizedIntro)) {
+    return normalizedIntro;
+  }
+
+  return introFile;
 }
 
 /**
@@ -408,6 +521,18 @@ async function main() {
     console.log(`🔍 Auto-detected latest folder: ${selectedFolder.name} (${selectedFolder.fullPath})`);
   }
 
+  // 1b. Check for channel intro video
+  let channelIntroPath = null;
+  if (!options.noIntro) {
+    channelIntroPath = findChannelIntro(options.baseDir, options.introPath);
+    if (channelIntroPath) {
+      const relIntro = path.relative(options.baseDir, channelIntroPath);
+      console.log(`🎬 Channel intro detected: ${relIntro} (will be prepended)`);
+    }
+  } else {
+    console.log(`ℹ️ Channel intro skipped (--no-intro specified)`);
+  }
+
   // 2. Discover and sort video clips inside the folder
   const videoFiles = getSortedVideoFiles(selectedFolder.fullPath);
   if (videoFiles.length === 0) {
@@ -416,8 +541,12 @@ async function main() {
   }
 
   console.log(`\n🎞️ Found ${videoFiles.length} video clip(s) in sequence:`);
-  videoFiles.forEach((file, index) => {
-    console.log(`   ${index + 1}. ${file.name}`);
+  let displayIndex = 1;
+  if (channelIntroPath) {
+    console.log(`   ${displayIndex++}. [Channel Intro] ${path.basename(channelIntroPath)}`);
+  }
+  videoFiles.forEach((file) => {
+    console.log(`   ${displayIndex++}. ${file.name}`);
   });
 
   // 3. Prepare output directory (ONLY the final output video will be kept here)
@@ -452,8 +581,15 @@ async function main() {
     await removeWatermarkWithProgress(file.fullPath, cleanOutput, i, videoFiles.length, options.bitrateMbps);
   }
 
-  // 5. Concatenate all cleaned videos into output/<outputFileName>
-  concatVideos(cleanedFiles, finalMergedOutput);
+  // 5. Concatenate intro and cleaned videos into output/<outputFileName>
+  const clipsToMerge = [];
+  if (channelIntroPath) {
+    const preparedIntro = prepareChannelIntro(channelIntroPath, cleanedFiles[0], tempCleanDir);
+    clipsToMerge.push(preparedIntro);
+  }
+  clipsToMerge.push(...cleanedFiles);
+
+  concatVideos(clipsToMerge, finalMergedOutput);
 
   // 6. Clean up temporary files so ONLY the final video exists in the output folder
   if (!options.keepTemp) {
@@ -472,6 +608,9 @@ async function main() {
     const stats = fs.statSync(finalMergedOutput);
     console.log(`🎥 Final Merged Video: ${finalMergedOutput}`);
     console.log(`📊 File Size:          ${formatBytes(stats.size)}`);
+    if (channelIntroPath) {
+      console.log(`🎬 Channel Intro:      Included at start (${path.basename(channelIntroPath)})`);
+    }
     console.log(`✨ Clean Output:       ${options.outputFolder}/ contains ONLY "${outputFileName}"`);
   }
   console.log('======================================================\n');

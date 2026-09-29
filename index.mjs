@@ -30,6 +30,7 @@ function parseArgs() {
     outputFileName: null,
     introPath: null,
     noIntro: false,
+    denoiseBackend: 'canvas-temporal-stabilize',
     bitrateMbps: 40,
     keepTemp: false,
     help: false
@@ -49,6 +50,14 @@ function parseArgs() {
       options.introPath = args[++i];
     } else if (arg === '--no-intro') {
       options.noIntro = true;
+    } else if (arg === '--denoise') {
+      options.denoiseBackend = args[++i];
+    } else if (arg === '--fast') {
+      options.denoiseBackend = 'canvas-temporal-stabilize';
+    } else if (arg === '--none') {
+      options.denoiseBackend = 'none';
+    } else if (arg === '--ai') {
+      options.denoiseBackend = 'allenk-fdncnn-browser-spike';
     } else if (arg === '--dir' || arg === '-d') {
       options.baseDir = args[++i];
     } else if (arg === '--bitrate' || arg === '-b') {
@@ -77,6 +86,10 @@ Options:
   -n, --name <file>       Custom output filename (default: output1.mp4, output2.mp4)
       --intro <path>      Explicit channel intro video path (default: channel_assets/channel_intro.mp4)
       --no-intro          Skip adding the channel intro to merged video
+      --fast              Fast mode using Canvas temporal stabilization (default, seconds per clip)
+      --none              Ultra-fast mode: raw reverse alpha blending without denoiser
+      --denoise <backend> Denoise backend (canvas-temporal-stabilize, none, allenk-fdncnn-browser-spike)
+      --ai                Enable deep AI neural network (CPU emulation: ~15 min per clip)
   -d, --dir <path>        Base directory to search for folders (default: current directory)
   -b, --bitrate <Mbps>    Output bitrate for watermark removal in Mbps (default: 40)
   -h, --help              Show this help message
@@ -326,7 +339,15 @@ function renderProgressBar(current, total, label = '', extra = '') {
 /**
  * Remove watermark from a single video with real-time live console progress
  */
-function removeWatermarkWithProgress(inputPath, outputPath, clipIndex, totalClips, bitrateMbps = 40, allowLowConfidence = true) {
+function removeWatermarkWithProgress(
+  inputPath,
+  outputPath,
+  clipIndex,
+  totalClips,
+  bitrateMbps = 40,
+  allowLowConfidence = true,
+  denoiseBackend = 'canvas-temporal-stabilize'
+) {
   return new Promise((resolve) => {
     const clipName = path.basename(inputPath);
     const label = `⏳ [${clipIndex + 1}/${totalClips}] ${clipName}`;
@@ -341,6 +362,10 @@ function removeWatermarkWithProgress(inputPath, outputPath, clipIndex, totalClip
       '--video-bitrate-mbps',
       String(bitrateMbps)
     ];
+
+    if (denoiseBackend) {
+      args.push('--video-denoise-backend', denoiseBackend);
+    }
 
     if (allowLowConfidence) {
       args.push('--allow-low-confidence');
@@ -580,7 +605,12 @@ async function main() {
   console.log(`🎯 Final video target: ${path.join(options.outputFolder, outputFileName)}`);
 
   // 4. Process each video through watermark remover into temporary folder
-  console.log(`\n✨ Removing watermarks (engine: geminiwatermarkremover.io)...`);
+  const denoiseDesc = options.denoiseBackend === 'allenk-fdncnn-browser-spike'
+    ? 'Deep AI FDnCNN (Slow CPU Emulation, ~15 min/clip)'
+    : options.denoiseBackend === 'none'
+      ? 'Ultra-Fast (Raw Reverse Alpha, No Denoiser)'
+      : `Fast (${options.denoiseBackend})`;
+  console.log(`\n✨ Removing watermarks [Engine: geminiwatermarkremover.io | Mode: ${denoiseDesc}]...`);
   const cleanedFiles = [];
 
   for (let i = 0; i < videoFiles.length; i++) {
@@ -590,7 +620,15 @@ async function main() {
     const cleanOutput = path.join(tempCleanDir, `clean_${baseNameWithoutExt}${outExt}`);
     cleanedFiles.push(cleanOutput);
 
-    await removeWatermarkWithProgress(file.fullPath, cleanOutput, i, videoFiles.length, options.bitrateMbps);
+    await removeWatermarkWithProgress(
+      file.fullPath,
+      cleanOutput,
+      i,
+      videoFiles.length,
+      options.bitrateMbps,
+      true,
+      options.denoiseBackend
+    );
   }
 
   // 5. Concatenate intro and cleaned videos into output/<outputFileName>

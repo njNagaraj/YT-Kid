@@ -115,14 +115,21 @@ node index.mjs [options]
 | `--name <file>` | `-n` | Custom output filename | Auto-derived (e.g. `output1.mp4`) |
 | `--intro <path>` | | Explicit channel intro video path | `channel_assets/channel_intro.mp4` |
 | `--no-intro` | | Skip adding the channel intro to merged video | `false` |
+| `--fast` | | Fast mode using Canvas temporal stabilization (~5–15 sec/clip) | `true` (default) |
+| `--none` | | Ultra-fast mode: raw reverse alpha blending without denoiser | `false` |
+| `--denoise <type>`| | Backend (`canvas-temporal-stabilize`, `none`, `allenk-fdncnn-browser-spike`) | `canvas-temporal-stabilize` |
+| `--ai` | | Enable heavy deep AI neural network (~15 min/clip CPU) | `false` |
 | `--bitrate <Mbps>`| `-b` | Video bitrate for watermark removal (in Mbps) | `40` |
 | `--keep-temp` | | Keep temporary cleaned clips for inspection | `false` |
 | `--help` | `-h` | Display help message and options | |
 
 #### Examples:
 ```bash
-# Process a specific folder
-node index.mjs -i input/video2 -o output -n custom_final.mp4
+# Process a specific folder (fast mode by default - takes seconds!)
+node index.mjs video2
+
+# Ultra-fast mode (raw reverse alpha blending, zero denoiser overhead)
+node index.mjs video2 --none
 
 # Run with custom intro video
 node index.mjs --intro custom_intro.mp4
@@ -130,8 +137,8 @@ node index.mjs --intro custom_intro.mp4
 # Run without prepending any channel intro
 node index.mjs --no-intro
 
-# Run with custom watermark removal bitrate (60 Mbps)
-node index.mjs -b 60
+# Run with deep neural network denoiser (slow, CPU emulation)
+node index.mjs video2 --ai
 ```
 
 ---

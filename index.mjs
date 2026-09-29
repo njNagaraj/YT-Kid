@@ -55,6 +55,8 @@ function parseArgs() {
       options.bitrateMbps = Number(args[++i]) || 40;
     } else if (arg === '--keep-temp') {
       options.keepTemp = true;
+    } else if (!arg.startsWith('-') && !options.inputFolder) {
+      options.inputFolder = arg;
     }
   }
 
@@ -501,16 +503,26 @@ async function main() {
   // 1. Determine input folder
   let selectedFolder = null;
   if (options.inputFolder) {
-    const fullPath = path.resolve(options.baseDir, options.inputFolder);
+    let fullPath = path.resolve(options.baseDir, options.inputFolder);
     if (!fs.existsSync(fullPath)) {
-      console.error(`❌ Specified input folder not found: ${options.inputFolder}`);
-      process.exit(1);
+      // Check inside input/ directory as shorthand (e.g. -i video2)
+      const insideInput = path.resolve(options.baseDir, 'input', options.inputFolder);
+      if (fs.existsSync(insideInput)) {
+        fullPath = insideInput;
+      } else {
+        console.error(`❌ Specified input folder not found: "${options.inputFolder}" (checked "${fullPath}" and "${insideInput}")`);
+        process.exit(1);
+      }
     }
+    const folderName = path.basename(fullPath);
+    const match = folderName.match(/^vide?o?[-_]*(\d+)?$/i);
+    const numericIndex = match && match[1] !== undefined ? parseInt(match[1], 10) : 1;
     selectedFolder = {
-      name: path.basename(fullPath),
-      fullPath
+      name: folderName,
+      fullPath,
+      numericIndex
     };
-    console.log(`📁 Target folder explicitly provided: ${selectedFolder.name}`);
+    console.log(`📁 Target folder explicitly provided: ${selectedFolder.name} (Output -> output${numericIndex}.mp4)`);
   } else {
     selectedFolder = findLatestVideoFolder(options.baseDir);
     if (!selectedFolder) {

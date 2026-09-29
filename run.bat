@@ -4,6 +4,6 @@ cd /d "%~dp0"
 echo ======================================================
 echo  Starting Gemini Watermark Removal and Video Stitcher
 echo ======================================================
-npm start
+node index.mjs %*
 echo.
 pause

@@ -218,6 +218,37 @@ function prepareChannelIntro(introFile, referenceClipPath, tempDir) {
 }
 
 /**
+ * Resolve non-conflicting output filename.
+ * If output1.mp4 exists, returns output1_copy1.mp4, output1_copy2.mp4, etc.
+ */
+function resolveNonConflictingFilePath(targetDir, desiredFileName) {
+  const parsed = path.parse(desiredFileName);
+  const baseName = parsed.name;
+  const ext = parsed.ext || '.mp4';
+
+  let candidatePath = path.join(targetDir, `${baseName}${ext}`);
+  if (!fs.existsSync(candidatePath)) {
+    return {
+      fileName: `${baseName}${ext}`,
+      fullPath: candidatePath
+    };
+  }
+
+  let copyIndex = 1;
+  while (true) {
+    const candidateName = `${baseName}_copy${copyIndex}${ext}`;
+    candidatePath = path.join(targetDir, candidateName);
+    if (!fs.existsSync(candidatePath)) {
+      return {
+        fileName: candidateName,
+        fullPath: candidatePath
+      };
+    }
+    copyIndex++;
+  }
+}
+
+/**
  * Scan candidate folders in a directory matching vide_* or video_*
  */
 function scanVideoFoldersInDir(targetDir) {
@@ -605,14 +636,22 @@ async function main() {
   const tempCleanDir = path.join(options.baseDir, `.temp_clean_${Date.now()}`);
   fs.mkdirSync(tempCleanDir, { recursive: true });
 
-  // Determine output file name:
+  // Determine desired output file name:
   // Strictly without underscore: e.g. "video1" -> "output1.mp4", "video2" -> "output2.mp4"
-  const outputFileName =
+  const desiredFileName =
     options.outputFileName ||
     `output${selectedFolder.numericIndex || 1}.mp4`;
-  const finalMergedOutput = path.join(outDir, outputFileName);
+
+  // Auto-resolve naming conflicts: if output1.mp4 exists, use output1_copy1.mp4, output1_copy2.mp4, etc.
+  const resolved = resolveNonConflictingFilePath(outDir, desiredFileName);
+  const outputFileName = resolved.fileName;
+  const finalMergedOutput = resolved.fullPath;
 
   console.log(`\n📂 Output folder: ${options.outputFolder}/`);
+  if (outputFileName !== desiredFileName) {
+    console.log(`ℹ️ Conflict detected: "${desiredFileName}" already exists.`);
+    console.log(`   Auto-renaming to:    "${outputFileName}"`);
+  }
   console.log(`🎯 Final video target: ${path.join(options.outputFolder, outputFileName)}`);
 
   // 4. Processing based on chosen mode

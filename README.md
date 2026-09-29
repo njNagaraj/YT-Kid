@@ -105,6 +105,13 @@ output/output1.mp4
 ```
 *(If the input folder was `video2`, the output file will be named `output/output2.mp4`)*
 
+🛡️ **Automatic File Protection & Conflict Resolution**:
+If a file named `output1.mp4` already exists in `output/`, the pipeline will automatically avoid overwriting it and save as:
+```text
+output/output1_copy1.mp4
+output/output1_copy2.mp4 (if copy1 exists, and so forth)
+```
+
 ---
 
 ## ⚙️ CLI Options & Advanced Usage

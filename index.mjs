@@ -30,6 +30,8 @@ function parseArgs() {
     outputFileName: null,
     introPath: null,
     noIntro: false,
+    joinOnly: false,
+    clipByClip: false,
     denoiseBackend: 'canvas-temporal-stabilize',
     bitrateMbps: 40,
     keepTemp: false,
@@ -50,6 +52,10 @@ function parseArgs() {
       options.introPath = args[++i];
     } else if (arg === '--no-intro') {
       options.noIntro = true;
+    } else if (arg === '--join-only' || arg === '--skip-watermark') {
+      options.joinOnly = true;
+    } else if (arg === '--clip-by-clip') {
+      options.clipByClip = true;
     } else if (arg === '--denoise') {
       options.denoiseBackend = args[++i];
     } else if (arg === '--fast') {
@@ -79,6 +85,11 @@ function printHelp() {
 Usage:
   npm start
   node index.mjs [options]
+
+Modes:
+  --join-only             Option 1: Video Joiner only (lossless stitching, skips watermark removal)
+  (default)               Option 2: Join clips first -> Remove watermark once -> Add channel intro
+  --clip-by-clip          Legacy Mode: Clean each clip individually before merging
 
 Options:
   -i, --input <folder>    Explicitly specify the video folder (default: auto-detect latest video1, video2, etc.)
@@ -604,42 +615,106 @@ async function main() {
   console.log(`\n📂 Output folder: ${options.outputFolder}/`);
   console.log(`🎯 Final video target: ${path.join(options.outputFolder, outputFileName)}`);
 
-  // 4. Process each video through watermark remover into temporary folder
-  const denoiseDesc = options.denoiseBackend === 'allenk-fdncnn-browser-spike'
-    ? 'Deep AI FDnCNN (Slow CPU Emulation, ~15 min/clip)'
-    : options.denoiseBackend === 'none'
-      ? 'Ultra-Fast (Raw Reverse Alpha, No Denoiser)'
-      : `Fast (${options.denoiseBackend})`;
-  console.log(`\n✨ Removing watermarks [Engine: geminiwatermarkremover.io | Mode: ${denoiseDesc}]...`);
-  const cleanedFiles = [];
+  // 4. Processing based on chosen mode
+  if (options.joinOnly) {
+    // ---------------------------------------------------------
+    // OPTION 1: Video Joiner Only (Lossless Concat, No Watermark Removal)
+    // ---------------------------------------------------------
+    console.log('\n🚀 Processing Mode: [1] Video Joiner Only (Lossless Stitching, No Watermark Removal)');
 
-  for (let i = 0; i < videoFiles.length; i++) {
-    const file = videoFiles[i];
-    const outExt = file.ext && file.ext.startsWith('.') ? file.ext : '.mp4';
-    const baseNameWithoutExt = file.ext ? path.basename(file.name, file.ext) : file.name;
-    const cleanOutput = path.join(tempCleanDir, `clean_${baseNameWithoutExt}${outExt}`);
-    cleanedFiles.push(cleanOutput);
+    const clipsToMerge = [];
+    if (channelIntroPath) {
+      console.log('🎬 Prepending channel intro to final video queue...');
+      const preparedIntro = prepareChannelIntro(channelIntroPath, videoFiles[0].fullPath, tempCleanDir);
+      clipsToMerge.push(preparedIntro);
+    }
+    clipsToMerge.push(...videoFiles.map((f) => f.fullPath));
+
+    concatVideos(clipsToMerge, finalMergedOutput);
+  } else if (options.clipByClip) {
+    // ---------------------------------------------------------
+    // LEGACY: Clean clips individually, then join
+    // ---------------------------------------------------------
+    console.log('\n🚀 Processing Mode: Video Joiner + Watermark Remover (Clip-by-Clip Pass)');
+    const denoiseDesc = options.denoiseBackend === 'allenk-fdncnn-browser-spike'
+      ? 'Deep AI FDnCNN (Slow CPU Emulation, ~15 min/clip)'
+      : options.denoiseBackend === 'none'
+        ? 'Ultra-Fast (Raw Reverse Alpha, No Denoiser)'
+        : `Fast (${options.denoiseBackend})`;
+    console.log(`✨ Removing watermarks [Engine: geminiwatermarkremover.io | Mode: ${denoiseDesc}]...`);
+    const cleanedFiles = [];
+
+    for (let i = 0; i < videoFiles.length; i++) {
+      const file = videoFiles[i];
+      const outExt = file.ext && file.ext.startsWith('.') ? file.ext : '.mp4';
+      const baseNameWithoutExt = file.ext ? path.basename(file.name, file.ext) : file.name;
+      const cleanOutput = path.join(tempCleanDir, `clean_${baseNameWithoutExt}${outExt}`);
+      cleanedFiles.push(cleanOutput);
+
+      await removeWatermarkWithProgress(
+        file.fullPath,
+        cleanOutput,
+        i,
+        videoFiles.length,
+        options.bitrateMbps,
+        true,
+        options.denoiseBackend
+      );
+    }
+
+    const clipsToMerge = [];
+    if (channelIntroPath) {
+      const preparedIntro = prepareChannelIntro(channelIntroPath, cleanedFiles[0], tempCleanDir);
+      clipsToMerge.push(preparedIntro);
+    }
+    clipsToMerge.push(...cleanedFiles);
+
+    concatVideos(clipsToMerge, finalMergedOutput);
+  } else {
+    // ---------------------------------------------------------
+    // OPTION 2: Join first -> Remove watermark once -> Add channel intro
+    // ---------------------------------------------------------
+    console.log('\n🚀 Processing Mode: [2] Video Joiner + Watermark Remover (Join First -> Remove Watermark -> Prepend Intro)');
+
+    let rawTargetToClean = null;
+    if (videoFiles.length > 1) {
+      console.log(`\n🔗 Step 1/3: Pre-joining ${videoFiles.length} source clips with FFmpeg...`);
+      const tempRawJoined = path.join(tempCleanDir, `raw_joined_${Date.now()}.mp4`);
+      concatVideos(videoFiles.map((f) => f.fullPath), tempRawJoined);
+      rawTargetToClean = tempRawJoined;
+    } else {
+      console.log('\n🔗 Step 1/3: Single clip detected, proceeding directly to watermark removal...');
+      rawTargetToClean = videoFiles[0].fullPath;
+    }
+
+    // Step 2: Remove watermark from the joined video in one single browser pass
+    const tempCleanedJoined = path.join(tempCleanDir, `cleaned_joined_${Date.now()}.mp4`);
+    const denoiseDesc = options.denoiseBackend === 'allenk-fdncnn-browser-spike'
+      ? 'Deep AI FDnCNN (Slow CPU Emulation, ~15 min/clip)'
+      : options.denoiseBackend === 'none'
+        ? 'Ultra-Fast (Raw Reverse Alpha, No Denoiser)'
+        : `Fast (${options.denoiseBackend})`;
+    console.log(`\n✨ Step 2/3: Removing watermarks from joined video [Engine: geminiwatermarkremover.io | Mode: ${denoiseDesc}]...`);
 
     await removeWatermarkWithProgress(
-      file.fullPath,
-      cleanOutput,
-      i,
-      videoFiles.length,
+      rawTargetToClean,
+      tempCleanedJoined,
+      0,
+      1,
       options.bitrateMbps,
       true,
       options.denoiseBackend
     );
-  }
 
-  // 5. Concatenate intro and cleaned videos into output/<outputFileName>
-  const clipsToMerge = [];
-  if (channelIntroPath) {
-    const preparedIntro = prepareChannelIntro(channelIntroPath, cleanedFiles[0], tempCleanDir);
-    clipsToMerge.push(preparedIntro);
+    // Step 3: Add channel intro if present
+    if (channelIntroPath) {
+      console.log(`\n🎬 Step 3/3: Prepending channel intro to cleaned video...`);
+      const preparedIntro = prepareChannelIntro(channelIntroPath, tempCleanedJoined, tempCleanDir);
+      concatVideos([preparedIntro, tempCleanedJoined], finalMergedOutput);
+    } else {
+      fs.copyFileSync(tempCleanedJoined, finalMergedOutput);
+    }
   }
-  clipsToMerge.push(...cleanedFiles);
-
-  concatVideos(clipsToMerge, finalMergedOutput);
 
   // 6. Clean up temporary files so ONLY the final video exists in the output folder
   if (!options.keepTemp) {
@@ -658,6 +733,12 @@ async function main() {
     const stats = fs.statSync(finalMergedOutput);
     console.log(`🎥 Final Merged Video: ${finalMergedOutput}`);
     console.log(`📊 File Size:          ${formatBytes(stats.size)}`);
+    const modeLabel = options.joinOnly
+      ? 'Option 1: Video Joiner Only (Lossless Stitching)'
+      : options.clipByClip
+        ? 'Legacy: Clip-by-Clip Removal + Merge'
+        : 'Option 2: Join First -> Remove Watermark Once -> Prepend Intro';
+    console.log(`⚙️ Executed Mode:      ${modeLabel}`);
     if (channelIntroPath) {
       console.log(`🎬 Channel Intro:      Included at start (${path.basename(channelIntroPath)})`);
     }

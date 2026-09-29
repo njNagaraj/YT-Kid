@@ -86,9 +86,16 @@ input/video1/v3.mp4
 Choose either method:
 
 - **Method A (One-Click Windows):** Double-click `run.bat`.
+  It presents two intuitive options:
+  - `[1] Video Joiner Only`: Rapid, lossless stream-copy concatenation with channel intro, skipping watermark removal entirely.
+  - `[2] Video Joiner + Logo Remover`: Joins all user clips first into a single video, removes watermarks in one single fast browser pass, and prepends the channel intro.
 - **Method B (Terminal):**
   ```bash
-  npm start
+  # Option 1: Joiner Only (instant, no watermark removal)
+  node index.mjs video1 --join-only
+
+  # Option 2: Join First -> Remove Watermark -> Prepend Channel Intro (default)
+  node index.mjs video1
   ```
 
 ### 3. Check the Output
@@ -113,19 +120,24 @@ node index.mjs [options]
 | `--input <path>` | `-i` | Explicitly specify input folder | Auto-detect latest `video*` |
 | `--output <path>` | `-o` | Output directory for merged video | `output` |
 | `--name <file>` | `-n` | Custom output filename | Auto-derived (e.g. `output1.mp4`) |
+| `--join-only` | | **Option 1**: Video joiner only (lossless stitch, skip watermark removal) | `false` |
 | `--intro <path>` | | Explicit channel intro video path | `channel_assets/channel_intro.mp4` |
 | `--no-intro` | | Skip adding the channel intro to merged video | `false` |
 | `--fast` | | Fast mode using Canvas temporal stabilization (~5–15 sec/clip) | `true` (default) |
 | `--none` | | Ultra-fast mode: raw reverse alpha blending without denoiser | `false` |
 | `--denoise <type>`| | Backend (`canvas-temporal-stabilize`, `none`, `allenk-fdncnn-browser-spike`) | `canvas-temporal-stabilize` |
 | `--ai` | | Enable heavy deep AI neural network (~15 min/clip CPU) | `false` |
+| `--clip-by-clip` | | Legacy mode: clean clips individually before merging | `false` |
 | `--bitrate <Mbps>`| `-b` | Video bitrate for watermark removal (in Mbps) | `40` |
 | `--keep-temp` | | Keep temporary cleaned clips for inspection | `false` |
 | `--help` | `-h` | Display help message and options | |
 
 #### Examples:
 ```bash
-# Process a specific folder (fast mode by default - takes seconds!)
+# Option 1: Video Joiner Only (super fast, lossless concat)
+node index.mjs video2 --join-only
+
+# Option 2: Join clips first -> Remove watermark once -> Prepend Intro (default)
 node index.mjs video2
 
 # Ultra-fast mode (raw reverse alpha blending, zero denoiser overhead)

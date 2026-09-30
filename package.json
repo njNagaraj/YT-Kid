@@ -1,22 +1,22 @@
 {
-  "name": "yt-kids-video-cleaner",
-  "version": "1.0.0",
-  "description": "Automated Gemini watermark removal and video concatenation pipeline",
-  "main": "index.mjs",
+  "name": "tinybuild-video-pipeline",
+  "version": "2.0.0",
+  "private": true,
   "type": "module",
+  "description": "Video joiner with automatic channel intro prepending, auto-conflict resolution, and Gemini watermark removal.",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.mjs full",
+    "join": "node index.mjs join",
+    "clean": "node index.mjs clean",
+    "verify": "node index.mjs verify"
   },
-  "keywords": [
-    "gemini",
-    "watermark-remover",
-    "video-processing",
-    "ffmpeg"
-  ],
-  "author": "",
-  "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "@pilio/gemini-watermark-remover": "latest",
-    "playwright": "^1.63.0"
+    "@pilio/gemini-watermark-remover": "1.0.45",
+    "ffmpeg-static": "5.3.0",
+    "ffprobe-static": "3.1.0",
+    "playwright": "1.58.2"
   }
 }

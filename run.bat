@@ -1,21 +1,22 @@
 @echo off
 setlocal
-title YT Kids - Video Processing Pipeline
 cd /d "%~dp0"
+title YT Video Processing Pipeline
 
 echo ======================================================
-echo  YT Kids - Video Processing Pipeline
+echo    YT Video Processing Pipeline (Joiner + Cleaner)
 echo ======================================================
 echo.
 echo Select Mode:
-echo   [1] Video Joiner Only (Fast, Lossless - NO watermark removal)
-echo   [2] Video Joiner + Logo Remover (Join clips first -^> Remove watermark -^> Add channel intro)
+echo   [1] Video Joiner Only (Instant Lossless Stitch - NO watermark removal)
+echo   [2] Video Joiner + Logo Remover (Join first -^> Clean once -^> Prepend intro) [DEFAULT]
+echo   [3] Clean Clip-by-Clip (Parallel Workers) + Lossless Join
+echo   [4] Verify Files ^& Generate Report
 echo.
 
 set "MODE_CHOICE=2"
-set /p "MODE_CHOICE=Enter choice [1 or 2, default: 2]: "
+set /p "MODE_CHOICE=Enter choice [1-4, default: 2]: "
 
-:: Trim whitespace and quotes from MODE_CHOICE
 if defined MODE_CHOICE set "MODE_CHOICE=%MODE_CHOICE: =%"
 if defined MODE_CHOICE set "MODE_CHOICE=%MODE_CHOICE:"=%"
 
@@ -26,29 +27,29 @@ if "%TARGET_FOLDER%"=="" (
     set /p "TARGET_FOLDER=Enter video folder name (e.g. video1, video2) [Press Enter for latest]: "
 )
 
-:: Trim whitespace and quotes from TARGET_FOLDER
 if defined TARGET_FOLDER set "TARGET_FOLDER=%TARGET_FOLDER: =%"
 if defined TARGET_FOLDER set "TARGET_FOLDER=%TARGET_FOLDER:"=%"
 
-set "MODE_FLAG="
+set "MODE_FLAG=full"
 if "%MODE_CHOICE%"=="1" (
-    set "MODE_FLAG=--join-only"
-    echo.
-    echo [Selected: Mode 1 - Video Joiner Only]
+    set "MODE_FLAG=join"
+) else if "%MODE_CHOICE%"=="3" (
+    set "MODE_FLAG=clean --workers 2"
+) else if "%MODE_CHOICE%"=="4" (
+    set "MODE_FLAG=verify"
 ) else (
-    echo.
-    echo [Selected: Mode 2 - Video Joiner + Logo Remover - Join first, then Remove]
+    set "MODE_FLAG=full"
 )
 
 echo.
 if "%TARGET_FOLDER%"=="" (
-    echo [Processing latest detected folder...]
+    echo [Processing latest detected video folder with mode: %MODE_FLAG%...]
     echo.
     node index.mjs %MODE_FLAG%
 ) else (
-    echo [Processing folder: %TARGET_FOLDER%]
+    echo [Processing folder: %TARGET_FOLDER% with mode: %MODE_FLAG%...]
     echo.
-    node index.mjs "%TARGET_FOLDER%" %MODE_FLAG%
+    node index.mjs %MODE_FLAG% -i "%TARGET_FOLDER%"
 )
 
 echo.

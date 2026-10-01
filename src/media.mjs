@@ -72,6 +72,8 @@ export function getVideoMetadata(filePath) {
       height: p.video.height,
       r_frame_rate: p.video.r_frame_rate,
       codec: p.video.codec_name,
+      sample_rate: p.audio?.sample_rate || '48000',
+      channels: p.audio?.channels || 2,
     };
   } catch {
     return null;
@@ -104,7 +106,8 @@ export function assertLosslessCompatible(files) {
 }
 
 /**
- * Prepare channel intro so its resolution, aspect ratio, and fps match the target video clips.
+ * Prepare channel intro with SMART ZOOM & CROP (no black bars/letterboxing).
+ * If resolution/aspect-ratio conflict happens, it zooms and centers the intro to fill the target dimensions completely.
  */
 export function prepareChannelIntro(introFile, referenceClipPath, tempDir) {
   if (!referenceClipPath || !fs.existsSync(introFile)) return introFile;
@@ -125,10 +128,20 @@ export function prepareChannelIntro(introFile, referenceClipPath, tempDir) {
   }
 
   fs.mkdirSync(tempDir, { recursive: true });
-  const normalizedIntro = path.join(tempDir, `normalized_intro_${Date.now()}.mp4`);
-  console.log(`\n🎬 Adapting channel intro to match clip format (${targetMeta.width}x${targetMeta.height}, ${targetMeta.r_frame_rate} fps)...`);
+  const normalizedIntro = path.join(tempDir, `zoomed_channel_intro_${Date.now()}.mp4`);
+  
+  const isShorts = Number(targetMeta.height) > Number(targetMeta.width);
+  if (isShorts) {
+    console.log(`\n🎬 Adapting Channel Intro to YouTube Shorts (${targetMeta.width}x${targetMeta.height}, 9:16 vertical)...`);
+    console.log(`   🔎 Smart Zoom & Center Crop active: Fills vertical frame with ZERO black bars.`);
+  } else {
+    console.log(`\n🎬 Adapting Channel Intro to Full Video (${targetMeta.width}x${targetMeta.height}, horizontal)...`);
+    console.log(`   🔎 Smart Zoom & Center Crop active: Fills horizontal frame with ZERO black bars.`);
+  }
 
-  const vf = `scale=${targetMeta.width}:${targetMeta.height}:force_original_aspect_ratio=decrease,pad=${targetMeta.width}:${targetMeta.height}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+  // SMART ZOOM & CROP: scales to fill target dimensions then crops center
+  const vf = `scale=${targetMeta.width}:${targetMeta.height}:force_original_aspect_ratio=increase,crop=${targetMeta.width}:${targetMeta.height},setsar=1`;
+
   const res = spawnSync(
     ffmpegPath,
     [
@@ -139,9 +152,12 @@ export function prepareChannelIntro(introFile, referenceClipPath, tempDir) {
       '-c:v', 'libx264',
       '-crf', '18',
       '-preset', 'fast',
+      '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
-      '-ar', '48000',
-      '-ac', '2',
+      '-ar', String(targetMeta.sample_rate),
+      '-ac', String(targetMeta.channels),
+      '-b:a', '192k',
+      '-movflags', '+faststart',
       normalizedIntro,
     ],
     { stdio: 'inherit' }
@@ -157,7 +173,7 @@ export function prepareChannelIntro(introFile, referenceClipPath, tempDir) {
 /**
  * Concatenate multiple videos via FFmpeg concat demuxer.
  * 1. Tries 100% lossless stream copy (-c copy).
- * 2. If stream copy fails, falls back to visually lossless CRF 18 re-encode.
+ * 2. If stream copy fails, falls back to visually lossless CRF 18 re-encode with faststart for YouTube.
  */
 export function losslessJoin(files, manifest, output) {
   const manifestDir = path.dirname(manifest);
@@ -187,15 +203,16 @@ export function losslessJoin(files, manifest, output) {
     return probe(output);
   }
 
-  // Attempt 2: High-Quality Fallback Re-encode
-  console.log('⚠️ Stream copy concat failed (streams likely have differing timestamps or parameters). Falling back to visually lossless H.264 (CRF 18)...');
+  // Attempt 2: Visually Lossless Fallback Re-encode (CRF 18) optimized for YouTube
+  console.log('⚠️ Stream copy concat encountered differing parameters. Falling back to visually lossless H.264 (CRF 18) with faststart...');
   const encodeRes = spawnSync(
     ffmpegPath,
     [
       '-hide_banner', '-loglevel', 'warning', '-y',
       '-f', 'concat', '-safe', '0', '-i', manifest,
       '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
-      '-c:a', 'aac', '-b:a', '192k',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-ar', '48000', '-ac', '2', '-b:a', '192k',
       '-movflags', '+faststart',
       output,
     ],

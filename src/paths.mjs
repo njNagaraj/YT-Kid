@@ -187,7 +187,9 @@ export function getSixClips(folder) {
 
 /**
  * Resolve non-conflicting output filename.
- * If output1.mp4 exists, returns output1_copy1.mp4, output1_copy2.mp4, etc.
+ * If target exists, appends _copy1, _copy2, etc. before the extension:
+ * output1_with_logo.mp4 -> output1_with_logo_copy1.mp4, output1_with_logo_copy2.mp4
+ * output1_without_logo.mp4 -> output1_without_logo_copy1.mp4, output1_without_logo_copy2.mp4
  */
 export function resolveNonConflictingFilePath(targetDir, desiredFileName) {
   const parsed = path.parse(desiredFileName);
@@ -217,18 +219,30 @@ export function resolveNonConflictingFilePath(targetDir, desiredFileName) {
 }
 
 /**
- * Generate output paths for a selected folder.
+ * Generate output paths for a selected folder based on workflow mode.
+ * - Mode 'join': desired name is output<N>_with_logo.mp4
+ * - Mode 'full' / 'clean': desired name is output<N>_without_logo.mp4
  */
-export function outputsFor(folderInfo, customFileName = null) {
+export function outputsFor(folderInfo, mode = 'full', customFileName = null) {
   const folderName = typeof folderInfo === 'string' ? path.basename(folderInfo) : folderInfo.name;
   const numericIndex = typeof folderInfo === 'object' && folderInfo.numericIndex !== undefined
     ? folderInfo.numericIndex
     : (folderName.match(/\d+/) ? Number(folderName.match(/\d+/)[0]) : 1);
 
-  const desiredFileName = customFileName || `output${numericIndex}.mp4`;
-  const resolved = resolveNonConflictingFilePath(outputRoot, desiredFileName);
+  let desiredFileName = customFileName;
+  if (!desiredFileName) {
+    if (mode === 'join') {
+      desiredFileName = `output${numericIndex}_with_logo.mp4`;
+    } else if (mode === 'full' || mode === 'clean') {
+      desiredFileName = `output${numericIndex}_without_logo.mp4`;
+    } else {
+      desiredFileName = `output${numericIndex}.mp4`;
+    }
+  }
 
+  const resolved = resolveNonConflictingFilePath(outputRoot, desiredFileName);
   const timestamp = Date.now();
+
   return {
     desiredFileName,
     outputFileName: resolved.fileName,

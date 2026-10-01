@@ -10,7 +10,7 @@ const localBrowsers = path.join(root, '.playwright-browsers');
 /**
  * Locate GWR CLI binary or fallback to npx
  */
-function getGwrCommand() {
+export function getGwrCommand() {
   if (fs.existsSync(localGwrCli)) {
     return { cmd: process.execPath, args: [localGwrCli] };
   }
@@ -18,34 +18,20 @@ function getGwrCommand() {
 }
 
 /**
- * Render terminal progress bar in-place
+ * Clean a single video file using Gemini Watermark Remover CLI
  */
-export function renderProgressBar(current, total, label = '', extra = '') {
-  const percent = total > 0 ? Math.min(100, Math.max(0, Math.round((current / total) * 100))) : current;
-  const barWidth = 24;
-  const filled = Math.round((barWidth * percent) / 100);
-  const empty = barWidth - filled;
-  const bar = '█'.repeat(filled) + '░'.repeat(empty);
-  const formatted = `\r   ${label} [${bar}] ${String(percent).padStart(3)}% ${extra}`;
-  process.stdout.write(formatted.padEnd(85, ' '));
-}
+export async function removeVideoWatermark(input, output, options = {}) {
+  const {
+    bitrateMbps = 40,
+    denoiseBackend = 'canvas-temporal-stabilize',
+    allowLowConfidence = true,
+    onProgress = null,
+  } = options;
 
-/**
- * Remove visible Gemini logo with live progress reporting
- */
-export async function removeVisibleGeminiLogo(
-  input,
-  output,
-  bitrateMbps = 40,
-  denoiseBackend = 'canvas-temporal-stabilize',
-  allowLowConfidence = true,
-  clipLabel = ''
-) {
   const gwr = getGwrCommand();
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.rmSync(output, { force: true });
 
-  const label = clipLabel || `✨ Removing Logo: ${path.basename(input)}`;
   const args = [
     ...gwr.args,
     'remove',
@@ -68,9 +54,11 @@ export async function removeVisibleGeminiLogo(
     env.PLAYWRIGHT_BROWSERS_PATH = localBrowsers;
   }
 
-  renderProgressBar(0, 100, label, 'Starting engine...');
+  if (onProgress) {
+    onProgress({ percent: 0, extra: 'Starting engine...', status: 'Initializing' });
+  }
 
-  const success = await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const child = spawn(gwr.cmd, args, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -78,41 +66,106 @@ export async function removeVisibleGeminiLogo(
       env,
     });
 
-    let lastProgress = 0;
-
     child.stderr.on('data', (chunk) => {
       const text = chunk.toString();
       const lines = text.split(/\r?\n/);
       for (const line of lines) {
-        const percentMatch = line.match(/(\d{1,3})%/);
+        // GWR format: [video] 45% 135/300 frames (AI 2, reused 133)
+        const percentMatch = line.match(/\[video\]\s*(\d{1,3})%/i) || line.match(/(\d{1,3})%/);
         const frameMatch = line.match(/(\d+\/\d+\s+frames)/);
+        const aiMatch = line.match(/\(AI[^\)]+\)/i);
+
         if (percentMatch) {
-          const pct = parseInt(percentMatch[1], 10);
-          lastProgress = pct;
-          const extra = frameMatch ? `(${frameMatch[1]})` : 'Processing frames...';
-          renderProgressBar(pct, 100, label, extra);
+          const percent = parseInt(percentMatch[1], 10);
+          const extra = [frameMatch ? frameMatch[1] : '', aiMatch ? aiMatch[0] : '']
+            .filter(Boolean)
+            .join(' ');
+          if (onProgress) {
+            onProgress({
+              percent,
+              extra: extra || `${percent}%`,
+              status: percent >= 100 ? 'Finalizing...' : 'Cleaning frames',
+            });
+          }
         }
       }
     });
 
     child.once('error', (err) => {
-      process.stdout.write(`\r   ⚠️ ${label}: Engine failed to start (${err.message}). Preserving original.\n`);
+      if (onProgress) {
+        onProgress({ percent: 100, extra: 'Preserved', status: `Engine error: ${err.message}` });
+      }
       fs.copyFileSync(input, output);
-      resolve(false);
+      resolve({ success: false, reason: err.message });
     });
 
     child.once('exit', (code) => {
       if (code === 0 && fs.existsSync(output) && fs.statSync(output).size > 0) {
-        renderProgressBar(100, 100, label, 'Cleaned successfully!');
-        process.stdout.write('\n');
-        resolve(true);
+        if (onProgress) {
+          onProgress({ percent: 100, extra: 'Done', status: 'Cleaned successfully' });
+        }
+        resolve({ success: true, path: output });
       } else {
-        process.stdout.write(`\r   ⚠️ ${label}: Watermark not detected or low confidence. Preserving original clip.\n`);
+        if (onProgress) {
+          onProgress({ percent: 100, extra: 'Preserved', status: 'No logo or low confidence' });
+        }
         fs.copyFileSync(input, output);
-        resolve(false);
+        resolve({ success: false, reason: 'Watermark not detected or low confidence' });
       }
     });
   });
+}
 
-  return success;
+/**
+ * Execute watermark removal concurrently across a list of video clips.
+ */
+export async function cleanClipsConcurrently(clips, cleanedOutputs, options = {}) {
+  const {
+    concurrency = 2,
+    bitrateMbps = 40,
+    denoiseBackend = 'canvas-temporal-stabilize',
+    dashboard = null,
+  } = options;
+
+  let taskIndex = 0;
+  const results = new Array(clips.length);
+
+  async function worker(workerId) {
+    while (taskIndex < clips.length) {
+      const idx = taskIndex++;
+      const src = clips[idx];
+      const dst = cleanedOutputs[idx];
+      const taskId = `clip_${idx + 1}`;
+      const fileName = path.basename(src);
+
+      if (dashboard) {
+        dashboard.addTask(taskId, `[W${workerId}] ${fileName}`, 'Starting...');
+      }
+
+      const res = await removeVideoWatermark(src, dst, {
+        bitrateMbps,
+        denoiseBackend,
+        allowLowConfidence: true,
+        onProgress: (data) => {
+          if (dashboard) {
+            dashboard.update(taskId, data);
+          }
+        },
+      });
+
+      results[idx] = res;
+      if (dashboard) {
+        dashboard.complete(taskId, res.success, res.success ? 'Cleaned!' : 'Original kept');
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, clips.length);
+  await Promise.all(Array.from({ length: workerCount }, (_, i) => worker(i + 1)));
+
+  if (dashboard) {
+    dashboard.finish();
+  }
+
+  return results;
 }

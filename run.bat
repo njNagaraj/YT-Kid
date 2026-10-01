@@ -1,21 +1,19 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title YT Video Processing Pipeline
+title YT Video Processing Pipeline - Joiner ^& Parallel Cleaner
 
-echo ======================================================
-echo    YT Video Processing Pipeline (Joiner + Cleaner)
-echo ======================================================
+echo ====================================================================
+echo   YT Video Processing Pipeline (Joiner ^& Parallel Logo Cleaner)
+echo ====================================================================
 echo.
-echo Select Mode:
-echo   [1] Video Joiner Only (Instant Lossless Stitch - NO watermark removal)
-echo   [2] Video Joiner + Logo Remover (Join first -^> Clean once -^> Prepend intro) [DEFAULT]
-echo   [3] Clean Clip-by-Clip (Parallel Workers) + Lossless Join
-echo   [4] Verify Files ^& Generate Report
+echo Select Workflow Option:
+echo   [1] Join Video (Output: output_with_logo.mp4) [No logo removal]
+echo   [2] Parallel Logo Remover + Join Video (Output: output_without_logo.mp4) [DEFAULT]
 echo.
 
 set "MODE_CHOICE=2"
-set /p "MODE_CHOICE=Enter choice [1-4, default: 2]: "
+set /p "MODE_CHOICE=Enter choice [1 or 2, default: 2]: "
 
 if defined MODE_CHOICE set "MODE_CHOICE=%MODE_CHOICE: =%"
 if defined MODE_CHOICE set "MODE_CHOICE=%MODE_CHOICE:"=%"
@@ -33,21 +31,17 @@ if defined TARGET_FOLDER set "TARGET_FOLDER=%TARGET_FOLDER:"=%"
 set "MODE_FLAG=full"
 if "%MODE_CHOICE%"=="1" (
     set "MODE_FLAG=join"
-) else if "%MODE_CHOICE%"=="3" (
-    set "MODE_FLAG=clean --workers 2"
-) else if "%MODE_CHOICE%"=="4" (
-    set "MODE_FLAG=verify"
 ) else (
     set "MODE_FLAG=full"
 )
 
 echo.
 if "%TARGET_FOLDER%"=="" (
-    echo [Processing latest detected video folder with mode: %MODE_FLAG%...]
+    echo [Processing latest detected video folder with option: %MODE_FLAG%...]
     echo.
     node index.mjs %MODE_FLAG%
 ) else (
-    echo [Processing folder: %TARGET_FOLDER% with mode: %MODE_FLAG%...]
+    echo [Processing folder: %TARGET_FOLDER% with option: %MODE_FLAG%...]
     echo.
     node index.mjs %MODE_FLAG% -i "%TARGET_FOLDER%"
 )
